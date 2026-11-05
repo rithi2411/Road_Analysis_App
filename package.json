@@ -1,0 +1,13 @@
+{
+  "name": "road-analysis-app",
+  "version": "1.0.0",
+  "description": "Crowdsourced road roughness detection using phone sensors (accelerometer + GPS), with aggregation dashboard and municipality reporting.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "license": "MIT"
+}

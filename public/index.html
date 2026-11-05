@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Road Scan — Recorder</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>🛣️ Road Scan</h1>
+    <p class="sub">Crowdsourced road roughness mapping</p>
+  </header>
+
+  <main>
+    <section class="card status-card">
+      <div class="big-score">
+        <span id="score">–</span>
+        <span class="score-label">roughness<br/>now</span>
+      </div>
+      <div class="status-line" id="statusLine">Press Start to begin measuring.</div>
+      <div class="meters">
+        <div>🛰️ GPS: <b id="gpsStatus">off</b></div>
+        <div>📈 Sensor: <b id="sensorStatus">off</b></div>
+        <div>📤 Uploaded: <b id="uploadCount">0</b> pts</div>
+        <div>🚫 Rejected: <b id="filterCount">0</b></div>
+        <div>📨 Events/s: <b id="evHz">0</b></div>
+      </div>
+      <div class="diag" id="diag">–</div>
+    </section>
+
+    <section class="card controls">
+      <button id="startBtn" class="primary">▶️ Start recording</button>
+      <button id="stopBtn" class="danger" disabled>⏹ Stop</button>
+    </section>
+
+    <section class="card">
+      <h2>How it works</h2>
+      <ul class="help">
+        <li>Mount the phone safely in the vehicle (or hold it steady) and start recording before you drive.</li>
+        <li>The accelerometer measures vertical bumps; GPS tags where they happen.</li>
+        <li>Readings are batched and uploaded every ~10 s (needs internet; if offline, the last batch is retried).</li>
+        <li>View the combined map at <a href="/dashboard.html">the dashboard</a>.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Recent readings (this trip)</h2>
+      <canvas id="spark" width="600" height="120"></canvas>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
