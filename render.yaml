@@ -1,0 +1,28 @@
+# Render Blueprint — https://render.com/docs/blueprints
+# Deploy: go to render.com → New → Blueprint → paste this repo URL.
+# Everything runs 24/7 with free auto-HTTPS and auto-deploys on git push.
+
+services:
+  - type: web
+    name: road-analysis
+    env: node
+    region: singapore          # closest to your users (Asia/Calcutta)
+    plan: free                 # free tier; upgrade anytime
+    buildCommand: npm install
+    startCommand: npm start    # → node server.js
+    autoDeploy: true          # deploy on every push to main/master
+
+    # Persistent disk: keeps data/db.json + the OSM road cache across deploys.
+    # Without this, your readings and cached roads get wiped on every deploy.
+    disk:
+      name: road-data
+      path: /var/data
+      sizeGB: 1
+
+    envVars:
+      - key: PORT
+        value: "3000"
+      # Where the server persists db.json + data/roads/.
+      # Must match the disk path above.
+      - key: DATA_DIR
+        value: /var/data

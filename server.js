@@ -24,7 +24,9 @@ const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const DATA_DIR = path.join(__dirname, 'data');
+// DATA_DIR is overridable so a persistent disk (e.g. Render) can keep
+// db.json + the OSM road cache across deploys/restarts.
+const DATA_DIR = path.join(process.env.DATA_DIR || __dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
 // A bad road, on our 0-100 roughness scale.
