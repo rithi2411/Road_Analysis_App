@@ -10,10 +10,10 @@ road quality. Bad roads can be **reported to the municipality** with location,
 road name + quality data in one click.
 
 ```
-┌────────────┐  POST /api/readings  ┌──────────┐  GET /api/segments ┌───────────┐
+┌────────────┐  POST /api/readings   ┌──────────┐  GET /api/segments  ┌───────────┐
 │ Recorder   │ ───────────────────▶ │  Server  │ ──────────────────▶ │ Dashboard │
-│ PWA (phone)│   batched readings   │ Node.js  │                     │  (Leaflet)│
-└────────────┘                      └──────────┘ ◀────────────────── └───────────┘
+│ PWA (phone)│   batched readings   │ Node.js  │                      │  (Leaflet)│
+└────────────┘                      └──────────┘ ◀──────────────────  └───────────┘
                                      aggregates by         POST /api/reports
                                      grid segment          → municipality report
 ```
@@ -26,13 +26,9 @@ node server.js
 
 Open:
 
-- **Recorder (use on your phone):** http://localhost:3000/ — better yet, on your
-  LAN: `http://<your-pc-ip>:3000/` from the phone's browser.
-- **Dashboard (desktop):** http://localhost:3000/dashboard.html
+- **Recorder (use on your phone):** https://road-analysis.onrender.com
+- **Dashboard (desktop):** https://road-analysis.onrender.com/dashboard.html
 
-> Note: phone browsers only expose accelerometer data over **HTTPS**
-> (or `localhost`). For real phone testing, run behind a quick tunnel
-> (e.g. `npx localtunnel --port 3000`) or add TLS.
 
 ## How the roughness score works
 
