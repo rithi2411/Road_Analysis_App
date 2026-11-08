@@ -422,6 +422,40 @@ async function roadsForBatch(points) {
 
 /* --------------------------- snapping (projection) -------------------------- */
 
+function distMeters(p1, p2) {
+  const m = projMeters((p1[0] + p2[0]) / 2);
+  const dx = (p2[1] - p1[1]) * m.x;
+  const dy = (p2[0] - p1[0]) * m.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function slicePolyline(coords, startM, endM) {
+  if (!coords || coords.length < 2) return coords || [];
+  let cum = 0;
+  const pts = [];
+  for (let i = 0; i < coords.length - 1; i++) {
+    const p1 = coords[i];
+    const p2 = coords[i + 1];
+    const len = distMeters(p1, p2);
+    const segStart = cum;
+    const segEnd = cum + len;
+    if (segEnd >= startM && segStart <= endM) {
+      let tStart = 0, tEnd = 1;
+      if (startM > segStart && len > 0) tStart = (startM - segStart) / len;
+      if (endM < segEnd && len > 0) tEnd = (endM - segStart) / len;
+      const latA = p1[0] + (p2[0] - p1[0]) * tStart;
+      const lonA = p1[1] + (p2[1] - p1[1]) * tStart;
+      const latB = p1[0] + (p2[0] - p1[0]) * tEnd;
+      const lonB = p1[1] + (p2[1] - p1[1]) * tEnd;
+      if (pts.length === 0) pts.push([+latA.toFixed(5), +lonA.toFixed(5)]);
+      pts.push([+latB.toFixed(5), +lonB.toFixed(5)]);
+    }
+    cum = segEnd;
+    if (cum >= endM) break;
+  }
+  return pts.length >= 2 ? pts : coords;
+}
+
 /* Equirectangular metres-per-degree scaled by the segment's latitude */
 function projMeters(lat) {
   return { x: Math.cos((lat * Math.PI) / 180) * 111320, y: 110574 };
@@ -451,14 +485,23 @@ function snapPointPref(lat, lon, roads, preferredWayId) {
   let bestStay = null;
   const consider = (r) => {
     const c = r.coords;
+    let distAlong = 0;
     for (let i = 0; i < c.length - 1; i++) {
+      const segLen = distMeters(c[i], c[i + 1]);
       const { d2, t } = distSqToSeg(p, c[i], c[i + 1]);
-      const rec = { d2, road: r, lat: c[i][0] + (c[i + 1][0] - c[i][0]) * t, lon: c[i][1] + (c[i + 1][1] - c[i][1]) * t };
+      const distOnWay = distAlong + t * segLen;
+      const rec = {
+        d2, road: r,
+        lat: c[i][0] + (c[i + 1][0] - c[i][0]) * t,
+        lon: c[i][1] + (c[i + 1][1] - c[i][1]) * t,
+        distOnWay
+      };
       if (String(r.id) === String(preferredWayId)) {
         if (!bestStay || d2 < bestStay.d2) bestStay = rec;
       } else if (!bestOther || d2 < bestOther.d2) {
         bestOther = rec;
       }
+      distAlong += segLen;
     }
   };
 
@@ -555,14 +598,18 @@ function ingestBatch(batch, roads) {
       if (deviceLastWay.size > 5000) deviceLastWay.delete(deviceLastWay.keys().next().value);
     }
 
-    const key = match ? 'way:' + match.road.id : segmentKey(lat, lon);
+    const subIndex = match ? Math.floor((match.distOnWay || 0) / 100) : 0;
+    const key = match ? 'way:' + match.road.id + ':s' + subIndex : segmentKey(lat, lon);
     const atLat = match ? match.lat : lat;
     const atLon = match ? match.lon : lon;
+    const rangeLabel = `${subIndex * 100}–${(subIndex + 1) * 100}m`;
+    const baseName = match && match.road.name ? match.road.name : null;
+    const segName = baseName ? `${baseName} (${rangeLabel})` : null;
     let seg = db.segments[key];
     if (!seg) {
       seg = db.segments[key] = {
         id: key,
-        name: match && match.road.name ? match.road.name : null,
+        name: segName,
         type: match ? match.road.type : null,
         source: match ? 'osm' : 'grid',
         lat: Number(atLat.toFixed(5)),
@@ -752,12 +799,22 @@ const server = http.createServer((req, res) => {
   }
 
   if (url.pathname === '/api/roads' && req.method === 'GET') {
-    // geometry for specific OSM ways, for drawing on the dashboard
+    // geometry for specific OSM ways / sub-segments, for drawing on the dashboard
     const ids = (url.searchParams.get('ids') || '').split(',').filter(Boolean).slice(0, 500);
     const roads = {};
-    for (const id of ids) {
-      const coords = wayIndex.get(id);
-      if (coords) roads[id] = coords;
+    for (const fullId of ids) {
+      const parts = fullId.split(':');
+      const wayId = parts[0];
+      const coords = wayIndex.get(wayId);
+      if (!coords || !coords.length) continue;
+      if (parts.length > 1 && parts[1].startsWith('s')) {
+        const subIndex = parseInt(parts[1].slice(1), 10);
+        if (!isNaN(subIndex)) {
+          roads[fullId] = slicePolyline(coords, subIndex * 100, (subIndex + 1) * 100);
+          continue;
+        }
+      }
+      roads[fullId] = coords;
     }
     return sendJson(res, 200, { roads });
   }
