@@ -3,6 +3,7 @@
 let map, markers = [];
 let segments = [];
 let selected = null;
+let firstLoad = true;
 
 const THRESHOLD = 45; // server also enforces this
 
@@ -64,12 +65,15 @@ function renderMap() {
     }).addTo(map).bindPopup(popupHtml(s));
     return m;
   });
-  if (segments.length) {
+
+  // Only fit bounds on the first load to prevent jumping during refreshes
+  if (firstLoad && segments.length) {
     const lats = segments.map((s) => s.lat), lons = segments.map((s) => s.lon);
     map.fitBounds([
       [Math.min(...lats), Math.min(...lons)],
       [Math.max(...lats), Math.max(...lons)]
     ], { padding: [30, 30] });
+    firstLoad = false;
   }
 }
 
