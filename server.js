@@ -8,7 +8,11 @@
  *   - GET  /api/reports    : list filed reports
  *   - POST /api/reset      : clear data (prototype only)
  *
- * Data is persisted to data/db.json so it survives restarts.
+ * Persistence:
+ *   - Locally: data/db.json (same as before)
+ *   - On Render (or any cloud): Supabase PostgreSQL via REST API (fetch-based,
+ *     zero extra npm packages). Set SUPABASE_URL and SUPABASE_ANON_KEY env vars
+ *     to enable. Falls back to file storage when env vars are absent.
  *
  * Anti-junk defenses (server side):
  *   - strict per-point validation (range, timestamp skew, speed bounds)
@@ -28,6 +32,17 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 // db.json + the OSM road cache across deploys/restarts.
 const DATA_DIR = path.join(process.env.DATA_DIR || __dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
+
+// Supabase config (optional — enables cloud persistence on Render)
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || '';
+const USE_SUPABASE = !!(SUPABASE_URL && SUPABASE_KEY);
+
+if (USE_SUPABASE) {
+  console.log('Persistence: Supabase (' + SUPABASE_URL + ')');
+} else {
+  console.log('Persistence: local file (' + DB_FILE + ')');
+}
 
 // A bad road, on our 0-100 roughness scale.
 const BAD_ROAD_THRESHOLD = 45;
@@ -62,7 +77,9 @@ const OSM_HIGHWAYS = 'motorway|trunk|primary|secondary|tertiary|residential|' +
 
 let db = { segments: {}, reports: [] };
 
-function loadDb() {
+/* ---- File-based storage (local dev) ---- */
+
+function loadDbFile() {
   try {
     db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
   } catch {
@@ -71,7 +88,7 @@ function loadDb() {
 }
 
 let saveTimer = null;
-function saveDb() {
+function saveDbFile() {
   if (saveTimer) return; // debounce writes; at most once per 2s
   saveTimer = setTimeout(() => {
     saveTimer = null;
@@ -79,12 +96,173 @@ function saveDb() {
       if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
       fs.writeFileSync(DB_FILE, JSON.stringify(db));
     } catch (e) {
-      console.error('Failed to save db:', e.message);
+      console.error('Failed to save db to file:', e.message);
     }
   }, 2000);
 }
 
-loadDb();
+/* ---- Supabase REST helpers ---- */
+
+function supabaseHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'apikey': SUPABASE_KEY,
+    'Authorization': 'Bearer ' + SUPABASE_KEY,
+    'Prefer': 'return=minimal'
+  };
+}
+
+// Upsert a single segment row  { key TEXT (PK), data JSONB }
+async function supabaseUpsertSegment(key, segData) {
+  try {
+    const res = await fetch(SUPABASE_URL + '/rest/v1/segments', {
+      method: 'POST',
+      headers: { ...supabaseHeaders(), 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({ key, data: segData }),
+      signal: AbortSignal.timeout(10_000)
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      console.error('Supabase upsert segment failed:', res.status, t.slice(0, 200));
+    }
+  } catch (e) {
+    console.error('Supabase upsert segment error:', e.message);
+  }
+}
+
+// Save all reports  { id TEXT (PK), data JSONB }
+async function supabaseUpsertReport(report) {
+  try {
+    const res = await fetch(SUPABASE_URL + '/rest/v1/reports', {
+      method: 'POST',
+      headers: { ...supabaseHeaders(), 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({ id: report.id, data: report }),
+      signal: AbortSignal.timeout(10_000)
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      console.error('Supabase upsert report failed:', res.status, t.slice(0, 200));
+    }
+  } catch (e) {
+    console.error('Supabase upsert report error:', e.message);
+  }
+}
+
+// Load all segments and reports from Supabase into the in-memory db
+async function loadDbSupabase() {
+  try {
+    const [segRes, repRes] = await Promise.all([
+      fetch(SUPABASE_URL + '/rest/v1/segments?select=key,data', {
+        headers: supabaseHeaders(),
+        signal: AbortSignal.timeout(15_000)
+      }),
+      fetch(SUPABASE_URL + '/rest/v1/reports?select=id,data&order=data->createdAt.desc', {
+        headers: supabaseHeaders(),
+        signal: AbortSignal.timeout(15_000)
+      })
+    ]);
+
+    if (!segRes.ok || !repRes.ok) {
+      console.error('Supabase load failed:', segRes.status, repRes.status);
+      db = { segments: {}, reports: [] };
+      return;
+    }
+
+    const segs = await segRes.json();
+    const reps = await repRes.json();
+
+    db.segments = {};
+    for (const row of (segs || [])) {
+      if (row.key && row.data) db.segments[row.key] = row.data;
+    }
+    db.reports = (reps || []).map(r => r.data).filter(Boolean);
+    console.log(`Loaded ${Object.keys(db.segments).length} segments, ${db.reports.length} reports from Supabase.`);
+  } catch (e) {
+    console.error('Supabase load error:', e.message);
+    db = { segments: {}, reports: [] };
+  }
+}
+
+// Delete all rows in Supabase (for /api/reset)
+async function resetDbSupabase() {
+  try {
+    await Promise.all([
+      fetch(SUPABASE_URL + '/rest/v1/segments?key=neq.___never___', {
+        method: 'DELETE',
+        headers: supabaseHeaders(),
+        signal: AbortSignal.timeout(10_000)
+      }),
+      fetch(SUPABASE_URL + '/rest/v1/reports?id=neq.___never___', {
+        method: 'DELETE',
+        headers: supabaseHeaders(),
+        signal: AbortSignal.timeout(10_000)
+      })
+    ]);
+  } catch (e) {
+    console.error('Supabase reset error:', e.message);
+  }
+}
+
+/* ---- Unified load / save ---- */
+
+async function loadDb() {
+  if (USE_SUPABASE) {
+    await loadDbSupabase();
+  } else {
+    loadDbFile();
+  }
+}
+
+// Debounce map: segKey -> timer handle. Prevents hammering Supabase on bursts.
+const segSaveTimers = new Map();
+
+function saveDb(changedSegmentKey) {
+  if (!USE_SUPABASE) {
+    // File mode: same debounced full write as before
+    saveDbFile();
+    return;
+  }
+
+  // Supabase mode: only write the rows that actually changed
+  if (changedSegmentKey) {
+    // Debounce per-segment: flush after 3 s of quiet
+    if (segSaveTimers.has(changedSegmentKey)) {
+      clearTimeout(segSaveTimers.get(changedSegmentKey));
+    }
+    const t = setTimeout(() => {
+      segSaveTimers.delete(changedSegmentKey);
+      const seg = db.segments[changedSegmentKey];
+      if (seg) supabaseUpsertSegment(changedSegmentKey, seg);
+    }, 3000);
+    segSaveTimers.set(changedSegmentKey, t);
+  }
+}
+
+function saveReport(report) {
+  if (!USE_SUPABASE) {
+    saveDbFile();
+    return;
+  }
+  supabaseUpsertReport(report);
+}
+
+/* ---- Bootstrap ---- */
+// loadDb() is async when Supabase is used; we start the server immediately
+// and queue requests while the initial load is in progress.
+let dbReady = false;
+let dbReadyCallbacks = [];
+
+function onDbReady(cb) {
+  if (dbReady) { cb(); return; }
+  dbReadyCallbacks.push(cb);
+}
+
+(async () => {
+  await loadDb();
+  dbReady = true;
+  for (const cb of dbReadyCallbacks) cb();
+  dbReadyCallbacks = [];
+})();
 
 /* --------------------------- ingest + aggregate ---------------------------
  * Segments are actual OSM roads (OpenStreetMap ways) when the road geometry
@@ -579,6 +757,8 @@ function ingestBatch(batch, roads) {
   const device = String(batch.device || 'anon').slice(0, 64);
 
   let added = 0, rejected = 0, offRoad = 0;
+  const changedKeys = new Set();
+
   for (const p of batch.points) {
     if (!validPoint(p)) { rejected++; continue; }
     if (isDuplicate(device, p)) { rejected++; continue; }
@@ -660,9 +840,13 @@ function ingestBatch(batch, roads) {
       if (ids.length > DEVICES_MAP_CAP) delete seg.devices[ids[0]];
     }
     seg.lastSeen = Math.max(seg.lastSeen, Number(p.t) || 0);
+    changedKeys.add(key);
     added++;
   }
-  if (added) saveDb();
+
+  if (added) {
+    for (const k of changedKeys) saveDb(k);
+  }
   return { added, rejected, offRoad };
 }
 
@@ -783,6 +967,16 @@ function serveStatic(req, res, urlPath) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
 
+  // Wait for db to be loaded before handling any API request
+  if (url.pathname.startsWith('/api/')) {
+    onDbReady(() => handleApi(req, res, url));
+    return;
+  }
+
+  serveStatic(req, res, url.pathname);
+});
+
+function handleApi(req, res, url) {
   if (url.pathname === '/api/readings' && req.method === 'POST') {
     return readBody(req, (err, body) => {
       if (err) return sendJson(res, 400, { error: 'invalid json' });
@@ -847,7 +1041,7 @@ const server = http.createServer((req, res) => {
         createdAt: Date.now()
       };
       db.reports.unshift(report);
-      saveDb();
+      saveReport(report);
       sendJson(res, 200, { ok: true, report });
     });
   }
@@ -858,12 +1052,17 @@ const server = http.createServer((req, res) => {
 
   if (url.pathname === '/api/reset' && req.method === 'POST') {
     db = { segments: {}, reports: [] };
-    saveDb();
+    if (USE_SUPABASE) {
+      resetDbSupabase();
+    } else {
+      saveDbFile();
+    }
     return sendJson(res, 200, { ok: true });
   }
 
-  serveStatic(req, res, url.pathname);
-});
+  // Unknown API route
+  sendJson(res, 404, { error: 'not found' });
+}
 
 server.listen(PORT, () => {
   console.log(`Road Analysis server running at http://localhost:${PORT}`);

@@ -7,22 +7,20 @@ services:
     name: road-analysis
     env: node
     region: singapore          # closest to your users (Asia/Calcutta)
-    plan: free                 # free tier; upgrade anytime
+    plan: free                 # free tier
     buildCommand: npm install
     startCommand: npm start    # → node server.js
-    autoDeploy: true          # deploy on every push to main/master
-
-    # Persistent disk: keeps data/db.json + the OSM road cache across deploys.
-    # Without this, your readings and cached roads get wiped on every deploy.
-    disk:
-      name: road-data
-      path: /var/data
-      sizeGB: 1
+    autoDeploy: true           # deploy on every push to main/master
 
     envVars:
       - key: PORT
         value: "3000"
-      # Where the server persists db.json + data/roads/.
-      # Must match the disk path above.
-      - key: DATA_DIR
-        value: /var/data
+
+      # ── Supabase persistence ───────────────────────────────────────────────
+      # Create a free project at https://supabase.com, then run the SQL in
+      # supabase_setup.sql (in this repo) to create the two tables.
+      # Paste your project values below (or set them as Render env secrets).
+      - key: SUPABASE_URL
+        value: "https://YOUR_PROJECT_ID.supabase.co"   # ← replace
+      - key: SUPABASE_ANON_KEY
+        value: "YOUR_ANON_KEY_HERE"                     # ← replace
