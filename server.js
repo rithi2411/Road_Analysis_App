@@ -104,10 +104,12 @@ function saveDbFile() {
 /* ---- Supabase REST helpers ---- */
 
 function supabaseHeaders() {
+  // Supports both old JWT keys (eyJ...) and new Supabase publishable keys (sb_publishable_...)
   return {
     'Content-Type': 'application/json',
     'apikey': SUPABASE_KEY,
     'Authorization': 'Bearer ' + SUPABASE_KEY,
+    'x-client-info': 'road-analysis-app',
     'Prefer': 'return=minimal'
   };
 }
