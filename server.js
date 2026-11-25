@@ -104,14 +104,20 @@ function saveDbFile() {
 /* ---- Supabase REST helpers ---- */
 
 function supabaseHeaders() {
-  // Supports both old JWT keys (eyJ...) and new Supabase publishable keys (sb_publishable_...)
-  return {
+  const headers = {
     'Content-Type': 'application/json',
     'apikey': SUPABASE_KEY,
-    'Authorization': 'Bearer ' + SUPABASE_KEY,
     'x-client-info': 'road-analysis-app',
     'Prefer': 'return=minimal'
   };
+
+  // Only pass Authorization if it's a JWT (eyJ...) or secret key (sb_secret_...)
+  // Raw sb_publishable_ keys will trigger 401 if passed as Bearer
+  if (SUPABASE_KEY.startsWith('eyJ') || SUPABASE_KEY.startsWith('sb_secret_')) {
+    headers['Authorization'] = 'Bearer ' + SUPABASE_KEY;
+  }
+
+  return headers;
 }
 
 // Upsert a single segment row  { key TEXT (PK), data JSONB }
@@ -365,6 +371,31 @@ function indexRoads(roads) {
     }
   }
 }
+
+// Pre-load all pre-baked or cached road files from ROAD_DIR into wayIndex on startup
+function preloadRoadCache() {
+  try {
+    if (fs.existsSync(ROAD_DIR)) {
+      const files = fs.readdirSync(ROAD_DIR);
+      for (const f of files) {
+        if (f.endsWith('.json')) {
+          try {
+            const roads = JSON.parse(fs.readFileSync(path.join(ROAD_DIR, f), 'utf8'));
+            if (Array.isArray(roads)) {
+              indexRoads(roads);
+              const bucketKey = f.replace('.json', '').replace(/_/g, ':');
+              roadCache.set(bucketKey, { roads, at: Date.now() });
+            }
+          } catch {}
+        }
+      }
+      console.log(`Pre-indexed ${wayIndex.size} OSM road geometries from cache.`);
+    }
+  } catch (e) {
+    console.error('Error preloading road cache:', e.message);
+  }
+}
+preloadRoadCache();
 
 /* Fallback data source: the classic OSM API ("map?bbox=" returning XML).
  * Same underlying OpenStreetMap data, different infrastructure — works even
